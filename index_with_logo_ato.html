@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KMP Reverse Pay Calculator — Australia FY26</title>
+  <style>
+    :root { --w: 820px; }
+    body { font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 0; color: #111; background:#fafafa; }
+    header { padding: 22px 16px; border-bottom: 1px solid #eee; background:#fff; }
+    main { max-width: var(--w); margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { margin: 0 0 6px; font-size: 20px; display:flex; align-items:center; gap:10px; }
+    .brand { display:flex; align-items:center; gap:12px; }
+    .brand img { height: 36px; border-radius: 6px; }
+    .card { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 16px; margin: 16px 0; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+    label { display:block; font-weight:600; margin: 10px 0 6px; }
+    input[type="number"], select { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #dcdcdc; border-radius: 8px; font-size: 15px; background:#fff; }
+    .row { display:flex; gap:14px; flex-wrap: wrap; }
+    .col { flex:1 1 220px; min-width: 220px; }
+    .actions { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+    button { cursor:pointer; border: 1px solid #111; background:#111; color:#fff; border-radius: 10px; padding: 10px 14px; font-weight:600; }
+    button.secondary { background:#fff; color:#111; }
+    .out { font: 600 18px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .muted { color:#666; font-size: 14px; }
+    .grid { display:grid; grid-template-columns: 1fr auto; gap:10px 16px; align-items: baseline; }
+    .k { color:#555; }
+    footer { max-width: var(--w); margin: 12px auto 48px; padding: 0 16px; color:#666; font-size:13px; }
+    .tip { background:#f8f8f8; border:1px dashed #ddd; border-radius:10px; padding:10px 12px; }
+    .toolbar { display:flex; gap:10px; align-items:center; flex-wrap: wrap; margin-top:8px;}
+    .linklike { border:1px solid #dcdcdc; background:#fff; color:#111; text-decoration:none; border-radius:10px; padding:10px 14px; font-weight:600; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <!-- Primary attempt: site favicon service as a safe logo fallback.
+           If you have a direct logo URL, replace the src below with it, e.g. https://kmpassociates.com.au/path/to/logo.png -->
+      <img src="https://www.google.com/s2/favicons?domain=kmpassociates.com.au&sz=128" alt="KMP Associates logo" onerror="this.style.display='none'">
+      <div>
+        <h1>KMP Reverse Pay Calculator — Australia FY26</h1>
+        <div class="muted">Net → Gross, PAYG (ATO Schedule 1), Super at 12%. Assumes resident, TFN provided; no STSL; no pre/post‑tax deductions.</div>
+        <div class="toolbar">
+          <a class="linklike" href="https://www.ato.gov.au/calculators-and-tools/tax-withheld-calculator" target="_blank" rel="noopener">Cross‑check in ATO calculator ↗</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="row">
+        <div class="col">
+          <label>Net payment (to bank) — $</label>
+          <input id="net" type="number" min="0" step="0.01" placeholder="e.g. 2,350.00" />
+        </div>
+        <div class="col">
+          <label>Pay frequency</label>
+          <select id="freq">
+            <option value="weekly">Weekly</option>
+            <option value="fortnightly">Fortnightly</option>
+            <option value="monthly" selected>Monthly</option>
+          </select>
+        </div>
+        <div class="col">
+          <label>Tax‑free threshold claimed?</label>
+          <select id="tft">
+            <option value="yes" selected>Yes (resident, Scale 2)</option>
+            <option value="no">No (resident, Scale 1)</option>
+          </select>
+        </div>
+      </div>
+      <div class="actions" style="margin-top:14px;">
+        <button id="calc">Calculate</button>
+        <button id="clear" class="secondary">Clear</button>
+        <div class="muted">Rounding per ATO: ignore cents in x and in withholding.</div>
+      </div>
+    </div>
+
+    <div id="results" class="card" style="display:none;">
+      <div class="grid">
+        <div class="k">Gross for period</div>
+        <div class="out" id="grossOut">$–</div>
+
+        <div class="k">PAYG withholding</div>
+        <div class="out" id="paygOut">$–</div>
+
+        <div class="k">Super (SG 12% on OTE)</div>
+        <div class="out" id="superOut">$–</div>
+
+        <div class="k">Check: Gross − PAYG</div>
+        <div class="out" id="netCheck">$–</div>
+      </div>
+      <div class="tip" style="margin-top:12px;">
+        Heads‑up: Years with 53 weekly / 27 fortnightly pays may need a small manual top‑up (ATO notes). This tool assumes the standard 52/26/12 periods.
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    Sources: ATO Schedule 1 (formulas y = a·x − b; weekly coefficients; weekly↔fortnightly/monthly conversion rules), and SG 12% from 1 July 2025.
+  </footer>
+
+  <script>
+    // ===== CONFIG =====
+    const SG_RATE = 0.12; // FY26: 12% from 1 July 2025
+
+    // ATO Schedule 1 coefficients (weekly) —— y = a*x − b, resident scales (TFN provided). No STSL.
+    const SCALE2 = [
+      [361, 0, 0, true],
+      [500, 0.1600, 57.8462],
+      [625, 0.2600, 107.8462],
+      [721, 0.1800, 57.8462],
+      [865, 0.1890, 64.3365],
+      [1282, 0.3227, 180.0385],
+      [2596, 0.3200, 176.5769],
+      [3653, 0.3900, 358.3077],
+      [Infinity, 0.4700, 650.6154],
+    ];
+
+    const SCALE1 = [
+      [150, 0.1600, 0.1600],
+      [371, 0.2117, 7.7550],
+      [515, 0.1890, -0.6702],
+      [932, 0.3227, 68.2367],
+      [2246, 0.3200, 65.7202],
+      [3303, 0.3900, 222.9510],
+      [Infinity, 0.4700, 487.2587],
+    ];
+
+    function weeklyXFromPeriodGross(gross, freq) {
+      if (freq === 'weekly') {
+        const base = Math.trunc(gross);
+        return base + 0.99;
+      }
+      if (freq === 'fortnightly') {
+        const wk = Math.trunc((gross) / 2);
+        return wk + 0.99;
+      }
+      if (freq === 'monthly') {
+        let amt = gross;
+        const cents = Math.round((amt - Math.trunc(amt)) * 100) / 100;
+        if (Math.abs(cents - 0.33) < 1e-9) amt += 0.01; // ATO quirk
+        const wkEq = Math.trunc((amt * 3) / 13);
+        return wkEq + 0.99;
+      }
+      throw new Error('Unsupported frequency');
+    }
+
+    function weeklyWithholdingFromX(x, scale) {
+      for (const [ub, a, b, isZero] of scale) {
+        if (x < ub) {
+          if (isZero) return 0;
+          const y = a * x - b;
+          return y < 0 ? 0 : y;
+        }
+      }
+      return 0;
+    }
+
+    function periodWithholding(gross, freq, tftYes) {
+      const x = weeklyXFromPeriodGross(gross, freq);
+      const scale = tftYes ? SCALE2 : SCALE1;
+      const yWeekly = weeklyWithholdingFromX(x, scale);
+      const yWeeklyRounded = Math.trunc(yWeekly + 1e-7);
+
+      let period = 0;
+      if (freq === 'weekly') period = yWeeklyRounded;
+      else if (freq === 'fortnightly') period = yWeeklyRounded * 2;
+      else if (freq === 'monthly') period = yWeeklyRounded * 13 / 3;
+      else throw new Error('Unsupported frequency');
+
+      return Math.trunc(period + 1e-7);
+    }
+
+    function solveGrossFromNet(targetNet, freq, tftYes) {
+      let lo = Math.max(0, targetNet);
+      let hi = targetNet + 20000;
+      const f = (G) => G - periodWithholding(G, freq, tftYes);
+
+      while (f(hi) < targetNet) hi *= 1.5;
+
+      for (let i = 0; i < 64; i++) {
+        const mid = (lo + hi) / 2;
+        const n = f(mid);
+        if (Math.abs(n - targetNet) < 0.005) return mid;
+        if (n < targetNet) lo = mid; else hi = mid;
+      }
+      return (lo + hi) / 2;
+    }
+
+    function fmt(n) {
+      return n.toLocaleString(undefined, { style: 'currency', currency: 'AUD' });
+    }
+
+    const $ = (id) => document.getElementById(id);
+    document.getElementById('calc').addEventListener('click', () => {
+      const net = parseFloat(($('net').value || '0').replace(/,/g,''));
+      const freq = $('freq').value;
+      const tftYes = $('tft').value === 'yes';
+      if (!(net > 0)) { alert('Enter a positive net amount.'); return; }
+
+      const gross = solveGrossFromNet(net, freq, tftYes);
+      const payg = periodWithholding(gross, freq, tftYes);
+      const superAmt = gross * SG_RATE;
+
+      $('grossOut').textContent = fmt(Math.round(gross * 100) / 100);
+      $('paygOut').textContent  = fmt(payg);
+      $('superOut').textContent = fmt(Math.round(superAmt * 100) / 100);
+      $('netCheck').textContent = fmt(Math.round((gross - payg) * 100) / 100);
+
+      $('results').style.display = '';
+    });
+
+    document.getElementById('clear').addEventListener('click', () => {
+      $('net').value = '';
+      $('results').style.display = 'none';
+    });
+  </script>
+</body>
+</html>
